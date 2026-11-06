@@ -13,6 +13,9 @@ class Guard:
         self.size = 26
         self.speed = 2
         
+        self.path_goal = None
+        self.move_target = None
+        
         # Guard facing direction
         self.facing = pygame.Vector2(1, 0)
 
@@ -59,54 +62,83 @@ class Guard:
 
         return (row, col)
 
+    
+    
     def move_to(self, target):
 
-        self.path_timer += 1
-
-        if self.path_timer >= 20 or not self.path:
-
-            self.path_timer = 0
-
+        # Recalculate path when goal changes
+        if target != self.path_goal:
             self.path = find_path(
                 self.get_grid_position(),
                 target
             )
 
-        if len(self.path) > 1:
+            self.path_goal = target
+            self.move_target = None
 
-            row, col = self.path[1]
+        if not self.path:
+            return
+
+        # Remove current tile from path
+        if len(self.path) > 1 and self.move_target is None:
+            self.path.pop(0)
+
+        remaining_distance = self.speed
+
+        # Allow movement across multiple tiles in one update
+        while self.path and remaining_distance > 0:
+
+            row, col = self.path[0]
 
             target_x = col * TILE_SIZE + TILE_SIZE // 2
             target_y = row * TILE_SIZE + TILE_SIZE // 2
 
-            current = pygame.Vector2(self.rect.center)
             destination = pygame.Vector2(target_x, target_y)
+            current = pygame.Vector2(self.rect.center)
 
             direction = destination - current
             distance = direction.length()
 
-            if distance > 0:
-                self.facing = direction.normalize()
+            if distance == 0:
+                self.path.pop(0)
+                self.move_target = None
+                continue
 
-            if distance <= self.speed:
+            self.facing = direction.normalize()
+
+            if distance <= remaining_distance:
 
                 self.rect.center = (target_x, target_y)
+
+                remaining_distance -= distance
+
                 self.path.pop(0)
+                self.move_target = None
 
-            elif distance > 0:
+            else:
 
-                direction.normalize_ip()
-                current += direction * self.speed
+                direction.scale_to_length(remaining_distance)
+
+                current += direction
 
                 self.rect.center = (
                     round(current.x),
                     round(current.y)
                 )
 
+                remaining_distance = 0
+
+
+    
     def update(self, player):
 
-        # Vision system
-        if can_see_player(self, player):
+        visible = can_see_player(self, player)
+
+        # Player detected
+        if visible:
+            if self.state != "CHASE":
+                self.path = []
+                self.path_goal = None
 
             self.state = "CHASE"
 
@@ -117,33 +149,41 @@ class Guard:
 
             self.search_timer = 0
 
-        # FSM
+        # PATROL
         if self.state == "PATROL":
 
             target = self.patrol_points[self.patrol_index]
 
             self.move_to(target)
 
-            if self.get_grid_position() == target:
+            target_x = target[1] * TILE_SIZE + TILE_SIZE // 2
+            target_y = target[0] * TILE_SIZE + TILE_SIZE // 2
+
+            if self.rect.center == (target_x, target_y):
 
                 self.patrol_index = (
                     self.patrol_index + 1
                 ) % len(self.patrol_points)
 
                 self.path = []
+                self.path_goal = None
+                self.move_target = None
 
+        # CHASE
         elif self.state == "CHASE":
 
-            if self.last_seen:
+            if visible and self.last_seen:
                 self.move_to(self.last_seen)
 
-            # Player lost
-            if not can_see_player(self, player):
-
+            else:
                 self.state = "SEARCH"
                 self.search_timer = 0
-                self.path = []
 
+                self.path = []
+                self.path_goal = None
+                self.move_target = None
+
+        # SEARCH
         elif self.state == "SEARCH":
 
             self.search_timer += 1
@@ -154,19 +194,29 @@ class Guard:
             if self.search_timer >= self.search_duration:
 
                 self.state = "RETURN"
-                self.path = []
 
+                self.path = []
+                self.path_goal = None
+                self.move_target = None
+
+        # RETURN
         elif self.state == "RETURN":
 
             target = self.patrol_points[0]
 
             self.move_to(target)
 
-            if self.get_grid_position() == target:
+            target_x = target[1] * TILE_SIZE + TILE_SIZE // 2
+            target_y = target[0] * TILE_SIZE + TILE_SIZE // 2
+
+            if self.rect.center == (target_x, target_y):
 
                 self.state = "PATROL"
                 self.patrol_index = 0
+
                 self.path = []
+                self.path_goal = None
+                self.move_target = None
 
     def draw(self, screen):
 

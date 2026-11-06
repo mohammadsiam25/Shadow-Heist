@@ -9,9 +9,14 @@ from map import GAME_MAP
 VISION_RANGE = 220
 VISION_ANGLE = 90
 
+RAY_COUNT = 45
+RAY_STEP = 4
+
+WALL_COLOR = (255, 35, 35, 65)
+EDGE_COLOR = (255, 50, 50, 120)
+
 
 def can_see_player(guard, player):
-
     start = pygame.Vector2(guard.rect.center)
     end = pygame.Vector2(player.rect.center)
 
@@ -23,7 +28,12 @@ def can_see_player(guard, player):
 
     direction.normalize_ip()
 
-    facing = guard.facing.normalize()
+    facing = pygame.Vector2(guard.facing)
+
+    if facing.length() == 0:
+        facing = pygame.Vector2(1, 0)
+
+    facing.normalize_ip()
 
     dot = max(-1.0, min(1.0, facing.dot(direction)))
     angle = math.degrees(math.acos(dot))
@@ -31,12 +41,11 @@ def can_see_player(guard, player):
     if angle > VISION_ANGLE / 2:
         return False
 
-    # Line-of-sight raycast
+    # Check walls between guard and player
     steps = max(int(distance), 1)
 
     for i in range(1, steps):
-
-        point = start + direction * (i / steps)
+        point = start + direction * i
 
         col = int(point.x // TILE_SIZE)
         row = int(point.y // TILE_SIZE)
@@ -56,33 +65,36 @@ def can_see_player(guard, player):
 
 
 def draw_vision_cone(screen, guard):
+    # Cache cone surface to avoid recreating it every frame
+    if not hasattr(guard, "vision_surface"):
+        guard.vision_surface = pygame.Surface(
+            screen.get_size(),
+            pygame.SRCALPHA
+        )
+
+    cone_surface = guard.vision_surface
+    cone_surface.fill((0, 0, 0, 0))
 
     center = pygame.Vector2(guard.rect.center)
-    facing = guard.facing
+
+    facing = pygame.Vector2(guard.facing)
 
     if facing.length() == 0:
         facing = pygame.Vector2(1, 0)
 
-    facing = facing.normalize()
+    facing.normalize_ip()
 
     base_angle = math.atan2(facing.y, facing.x)
     half_angle = math.radians(VISION_ANGLE / 2)
 
-    cone_surface = pygame.Surface(
-        screen.get_size(),
-        pygame.SRCALPHA
-    )
-
     points = [center]
 
-    # Cast rays across the cone
-    ray_count = 90
-
-    for i in range(ray_count + 1):
-
+    # Cast rays inside the vision angle
+    for i in range(RAY_COUNT + 1):
         angle = (
-            base_angle - half_angle
-            + (2 * half_angle) * i / ray_count
+            base_angle
+            - half_angle
+            + (2 * half_angle) * i / RAY_COUNT
         )
 
         direction = pygame.Vector2(
@@ -92,9 +104,8 @@ def draw_vision_cone(screen, guard):
 
         endpoint = center + direction * VISION_RANGE
 
-        # Raycast: stop at first wall
-        for distance in range(1, VISION_RANGE, 3):
-
+        # Stop ray at the first wall
+        for distance in range(1, VISION_RANGE, RAY_STEP):
             point = center + direction * distance
 
             col = int(point.x // TILE_SIZE)
@@ -110,42 +121,37 @@ def draw_vision_cone(screen, guard):
                 break
 
             if GAME_MAP[row][col] == "1":
-
                 endpoint = point
                 break
 
         points.append(endpoint)
 
-    # Draw vision cone
-    pygame.draw.polygon(
-        cone_surface,
-        (255, 35, 35, 65),
-        points
-    )
+    if len(points) >= 3:
+        pygame.draw.polygon(
+            cone_surface,
+            WALL_COLOR,
+            points
+        )
 
-    pygame.draw.polygon(
-        cone_surface,
-        (255, 50, 50, 120),
-        points,
-        2
-    )
+        pygame.draw.polygon(
+            cone_surface,
+            EDGE_COLOR,
+            points,
+            2
+        )
 
-    # Remove cone overlay from wall tiles
-    for row_index, row in enumerate(GAME_MAP):
-
-        for col_index, tile in enumerate(row):
-
-            if tile == "1":
-
+    # Keep vision overlay out of wall tiles
+    for row in range(len(GAME_MAP)):
+        for col in range(len(GAME_MAP[row])):
+            if GAME_MAP[row][col] == "1":
                 wall_rect = pygame.Rect(
-                    col_index * TILE_SIZE,
-                    row_index * TILE_SIZE,
+                    col * TILE_SIZE,
+                    row * TILE_SIZE,
                     TILE_SIZE,
                     TILE_SIZE
                 )
 
-                pygame.draw.rect(
-                    cone_surface,
+                cone_surface.fill(
                     (0, 0, 0, 0),
                     wall_rect
                 )
